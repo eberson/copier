@@ -1,9 +1,8 @@
 package copier_test
 
 import (
+	"github.com/eberson/copier"
 	"testing"
-
-	"github.com/jinzhu/copier"
 )
 
 type TypeStruct1 struct {
