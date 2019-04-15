@@ -110,29 +110,37 @@ func copyFromFieldToFieldOrMethod(fromType reflect.Type, source reflect.Value, d
 	for _, field := range deepFields(fromType) {
 		name := field.Name
 
-		if fromField := source.FieldByName(name); fromField.IsValid() {
-			// has field
-			if toField := dest.FieldByName(name); toField.IsValid() {
-				if toField.CanSet() {
-					if !set(toField, fromField) {
-						if err := Copy(toField.Addr().Interface(), fromField.Interface()); err != nil {
-							return err
-						}
-					}
-				}
-			} else {
-				// try to set to method
-				var toMethod reflect.Value
-				if dest.CanAddr() {
-					toMethod = dest.Addr().MethodByName(name)
-				} else {
-					toMethod = dest.MethodByName(name)
-				}
+		var fromField reflect.Value
 
-				if toMethod.IsValid() && toMethod.Type().NumIn() == 1 && fromField.Type().AssignableTo(toMethod.Type().In(0)) {
-					toMethod.Call([]reflect.Value{fromField})
+		if fromField = source.FieldByName(name); !fromField.IsValid() {
+			continue
+		}
+
+		// has field
+		if toField := dest.FieldByName(name); toField.IsValid() {
+			if !toField.CanSet() {
+				continue
+			}
+
+			if !set(toField, fromField) {
+				if err := Copy(toField.Addr().Interface(), fromField.Interface()); err != nil {
+					return err
 				}
 			}
+
+			continue
+		}
+
+		// try to set to method
+		var toMethod reflect.Value
+		if dest.CanAddr() {
+			toMethod = dest.Addr().MethodByName(name)
+		} else {
+			toMethod = dest.MethodByName(name)
+		}
+
+		if toMethod.IsValid() && toMethod.Type().NumIn() == 1 && fromField.Type().AssignableTo(toMethod.Type().In(0)) {
+			toMethod.Call([]reflect.Value{fromField})
 		}
 	}
 
@@ -193,9 +201,13 @@ func set(to, from reflect.Value) bool {
 
 		if from.Kind() == reflect.Map && to.Kind() == reflect.Map {
 			return setNestedMap(to, from)
-		} else if from.Kind() == reflect.Slice && to.Kind() == reflect.Slice {
+		}
+
+		if from.Kind() == reflect.Slice && to.Kind() == reflect.Slice {
 			return setNestedSlice(to, from)
-		} else if from.Type().ConvertibleTo(to.Type()) {
+		}
+
+		if from.Type().ConvertibleTo(to.Type()) {
 			to.Set(from.Convert(to.Type()))
 		} else if scanner, ok := to.Addr().Interface().(sql.Scanner); ok {
 			err := scanner.Scan(from.Interface())
