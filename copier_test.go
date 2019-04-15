@@ -3,11 +3,13 @@ package copier_test
 import (
 	"errors"
 
+	"github.com/stretchr/testify/assert"
+
+	"github.com/eberson/copier"
+
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/jinzhu/copier"
 )
 
 type User struct {
@@ -55,6 +57,10 @@ func checkEmployee(employee Employee, user User, t *testing.T, testCase string) 
 	if employee.Birthday != nil && user.Birthday == nil {
 		t.Errorf("%v: Birthday haven't been copied correctly.", testCase)
 	}
+	if employee.Birthday != nil && user.Birthday != nil &&
+		!employee.Birthday.Equal(*(user.Birthday)) {
+		t.Errorf("%v: Birthday haven't been copied correctly.", testCase)
+	}
 	if employee.Age != int64(user.Age) {
 		t.Errorf("%v: Age haven't been copied correctly.", testCase)
 	}
@@ -68,7 +74,22 @@ func checkEmployee(employee Employee, user User, t *testing.T, testCase string) 
 		t.Errorf("%v: Copy to method doesn't work", testCase)
 	}
 	if !reflect.DeepEqual(employee.Notes, user.Notes) {
-		t.Errorf("%v: Copy from slice doen't work", testCase)
+		t.Errorf("%v: Copy from slice doeork", testCase)
+	}
+}
+
+func TestCopySameStructWithPointerField(t *testing.T) {
+	var fakeAge int32 = 12
+	var currentTime = time.Now()
+	user := &User{Birthday: &currentTime, Name: "Jinzhu", Nickname: "jinzhu", Age: 18, FakeAge: &fakeAge, Role: "Admin", Notes: []string{"hello world", "welcome"}, flags: []byte{'x'}}
+	newUser := &User{}
+	copier.Copy(newUser, user)
+	if user.Birthday == newUser.Birthday {
+		t.Errorf("TestCopySameStructWithPointerField: copy Birthday failed since they need to have different address")
+	}
+
+	if user.FakeAge == newUser.FakeAge {
+		t.Errorf("TestCopySameStructWithPointerField: copy FakeAge failed since they need to have different address")
 	}
 }
 
@@ -99,7 +120,7 @@ func TestCopyStruct(t *testing.T) {
 }
 
 func TestCopyFromStructToSlice(t *testing.T) {
-	user := User{Name: "Jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}
+	user := User{Name: "Jinzhu", Nickname: "jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}
 	employees := []Employee{}
 
 	if err := copier.Copy(employees, &user); err != nil && len(employees) != 0 {
@@ -135,7 +156,7 @@ func TestCopyFromStructToSlice(t *testing.T) {
 }
 
 func TestCopyFromSliceToSlice(t *testing.T) {
-	users := []User{User{Name: "Jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}, User{Name: "Jinzhu2", Age: 22, Role: "Dev", Notes: []string{"hello world", "hello"}}}
+	users := []User{User{Name: "Jinzhu", Nickname: "jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}, User{Name: "Jinzhu2", Nickname: "jinzhu", Age: 22, Role: "Dev", Notes: []string{"hello world", "hello"}}}
 	employees := []Employee{}
 
 	if copier.Copy(&employees, users); len(employees) != 2 {
@@ -253,5 +274,204 @@ func TestScanner(t *testing.T) {
 
 	if s.V.V != s2.V.V {
 		t.Errorf("Field V should be copied")
+	}
+}
+
+func TestMapCopyValues(t *testing.T) {
+	type MyStruct struct {
+		Name  string
+		Items map[string]int
+	}
+
+	source := &MyStruct{
+		Name: "something",
+		Items: map[string]int{
+			"a": 0,
+			"b": 1,
+			"c": 2,
+		},
+	}
+
+	target := &MyStruct{}
+
+	copier.Copy(target, source)
+
+	delete(target.Items, "b")
+
+	assert := assert.New(t)
+
+	assert.Equal(2, len(target.Items))
+	assert.Equal(3, len(source.Items))
+
+}
+
+func TestMapCopyComplexValues(t *testing.T) {
+	assert := assert.New(t)
+
+	type Student struct {
+		Name string
+		Age  int
+	}
+
+	type Class struct {
+		Name     string
+		Students map[string]Student
+	}
+
+	source := &Class{
+		Name: "something",
+		Students: map[string]Student{
+			"a": {
+				Name: "Student A",
+				Age:  15,
+			},
+			"b": {
+				Name: "Student B",
+				Age:  16,
+			},
+		},
+	}
+
+	target := &Class{}
+
+	copier.Copy(target, source)
+
+	student := target.Students["a"]
+	student.Name = "Student X"
+	target.Students["a"] = student
+
+	assert.NotEqual(source.Students["a"].Name, target.Students["a"].Name)
+
+	delete(target.Students, "b")
+
+	assert.Equal(1, len(target.Students))
+	assert.Equal(2, len(source.Students))
+
+}
+
+func TestCopyNestedSlices(t *testing.T) {
+	type MyStruct struct {
+		Name  string
+		Items []int
+	}
+
+	source := &MyStruct{
+		Name:  "something",
+		Items: []int{0, 1},
+	}
+
+	target := &MyStruct{}
+
+	copier.Copy(target, source)
+
+	target.Items[0] = 10
+	target.Items[1] = 11
+
+	assert := assert.New(t)
+
+	assert.NotEqual(source.Items[0], target.Items[0])
+	assert.NotEqual(source.Items[1], target.Items[1])
+}
+
+func TestMismatchedStructToSimple(t *testing.T) {
+	// Types don't match.  Nothing should be copied to the mismatched field, but it should not panic.
+	type From struct {
+		Tmp  time.Time
+		Safe int64
+	}
+
+	type To struct {
+		Tmp  string
+		Safe int64
+	}
+
+	from := From{}
+	from.Tmp = time.Now()
+	from.Safe = 1
+	to := To{}
+	copier.Copy(&to, &from)
+
+	if to.Tmp != "" {
+		t.Error("Simple string field populated from complex data type incorrectly.")
+	}
+	if to.Safe != 1 {
+		t.Error("Simple integer field did not copy correctly.")
+	}
+}
+
+type A struct {
+	S       *string
+	Control string
+}
+
+type B struct {
+	S       string
+	Control string
+}
+
+type C struct {
+	S       *string
+	Control string
+}
+
+func TestEmptyValue(t *testing.T) {
+	b := &B{"", "foo"}
+	a := &A{}
+	copier.Copy(a, b)
+
+	if a.Control != "foo" {
+		t.Error("Incorrectly copied string")
+	} else if a.S != nil {
+		t.Error("Copied empty value field to pointer")
+	}
+}
+
+func TestNilPtoNiLP(t *testing.T) {
+	a := &A{}
+	c := &C{}
+	copier.Copy(a, c)
+	if a.S != nil {
+		t.Error("Did not copy nil pointer correctly")
+	}
+}
+
+func TestNilMap(t *testing.T) {
+	type Z struct {
+		M map[string]int
+		S string
+	}
+	type Y struct {
+		M map[string]int
+		S string
+	}
+	z := &Z{nil, "foo"}
+	y := &Y{}
+
+	copier.Copy(y, z)
+	if y.S != "foo" {
+		t.Error("Unable to copy string")
+	} else if y.M != nil {
+		t.Error("Uncorrectly copied zero value of map")
+	}
+
+}
+
+func TestNilSlice(t *testing.T) {
+	type Z struct {
+		Slice []string
+		S     string
+	}
+	type Y struct {
+		Slice []string
+		S     string
+	}
+	z := &Z{nil, "foo"}
+	y := &Y{}
+
+	copier.Copy(y, z)
+	if y.S != "foo" {
+		t.Error("Unable to copy string")
+	} else if y.Slice != nil {
+		t.Error("Uncorrectly copied zero value of slice")
 	}
 }
